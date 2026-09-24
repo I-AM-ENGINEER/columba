@@ -1,0 +1,41 @@
+name: Kotlin Backend Test APK
+
+# Manual one-off build of an installable (debug-signed) kotlinBackend APK
+# for on-device testing. Not part of the PR: kept on a side branch.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6.3.0
+        with:
+          cache-read-only: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build debug APK (noSentry kotlinBackend)
+        # Debug buildType signs with the debug keystore, so the APK installs
+        # on a device without any release-signing secrets.
+        timeout-minutes: 40
+        run: ./gradlew :app:assembleNoSentryKotlinBackendDebug --stacktrace
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: columba-kotlinBackend-debug-apks
+          path: app/build/outputs/apk/noSentryKotlinBackend/debug/*.apk
