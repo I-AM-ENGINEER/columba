@@ -97,34 +97,34 @@ private class BatteryFrameSniffer(private val onPercent: (Int) -> Unit) {
     private var overflow = false
 
     fun offer(b: Int) {
-        if (b == FEND) { // frame boundary
-            if (inFrame && !overflow) deliver()
-            inFrame = true
-            escape = false
-            command = -1
-            payload = ByteArray(0)
-            overflow = false
-            return
-        }
-        if (!inFrame) return // noise between frames
-        if (escape) {
-            escape = false
-            when (b) {
-                TFEND -> push(FEND)
-                TFESC -> push(FESC)
-                else -> push(b) // invalid escape; pass through like stock parsers
+        when {
+            b == FEND -> { // frame boundary
+                if (inFrame && !overflow) deliver()
+                inFrame = true
+                escape = false
+                command = -1
+                payload = ByteArray(0)
+                overflow = false
             }
-            return
+            !inFrame -> Unit // noise between frames
+            else -> offerPayloadByte(b)
         }
-        if (b == FESC) {
-            escape = true
-            return
+    }
+
+    private fun offerPayloadByte(b: Int) {
+        when {
+            escape -> {
+                escape = false
+                when (b) {
+                    TFEND -> push(FEND)
+                    TFESC -> push(FESC)
+                    else -> push(b) // invalid escape; pass through like stock parsers
+                }
+            }
+            b == FESC -> escape = true
+            command < 0 -> command = b
+            else -> push(b)
         }
-        if (command < 0) {
-            command = b
-            return
-        }
-        push(b)
     }
 
     private fun push(byte: Int) {
