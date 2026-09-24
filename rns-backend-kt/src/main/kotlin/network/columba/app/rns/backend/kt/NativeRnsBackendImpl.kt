@@ -1926,15 +1926,24 @@ class NativeRnsBackendImpl(
         val transportInterfaces = Transport.getInterfaces()
         val interfaceList =
             transportInterfaces.map { iface ->
-                mapOf(
-                    "name" to iface.name,
-                    "type" to iface.name.substringBefore("[").trim(),
-                    "online" to iface.online,
-                    "parent_name" to (iface.parentInterface?.name ?: ""),
-                    "can_send" to iface.canSend,
-                    "rx_bytes" to iface.rxBytes,
-                    "tx_bytes" to iface.txBytes,
-                )
+                val row =
+                    mapOf(
+                        "name" to iface.name,
+                        "type" to iface.name.substringBefore("[").trim(),
+                        "online" to iface.online,
+                        "parent_name" to (iface.parentInterface?.name ?: ""),
+                        "can_send" to iface.canSend,
+                        "rx_bytes" to iface.rxBytes,
+                        "tx_bytes" to iface.txBytes,
+                    )
+                // "battery" (0-100) on online RNode rows only, matching the
+                // Python backend's collectInterfaces() battery key that the
+                // interface-management screen renders.
+                if (iface is network.reticulum.interfaces.rnode.RNodeInterface && iface.online) {
+                    RNodeBatteryStore.get(iface.name)?.let { row + ("battery" to it) } ?: row
+                } else {
+                    row
+                }
             }
         return mapOf(
             "initialized" to isReady,
@@ -2400,10 +2409,20 @@ class NativeRnsBackendImpl(
     override fun getRNodeRssi(): Int = -100
 
     /**
-     * No RNode battery read in the Kotlin backend (deferred). Returns the
-     * absent sentinel so the shared UI needs no "unsupported backend" branch.
+     * Last reported battery percent (0-100) sniffed from the KISS
+     * CMD_STAT_BAT stream tap in RNodeConnectionHelper. Returns the absent
+     * sentinel (-1) when no RNode interface is online or the firmware has
+     * not emitted a battery frame yet — same contract as the Python
+     * backend's ColumbaRNodeInterface.get_battery(), so the shared UI needs
+     * no "unsupported backend" branch.
      */
-    override suspend fun getRNodeBattery(): Int = -1
+    override suspend fun getRNodeBattery(): Int =
+        NativeInterfaceFactory.currentInterfaces
+            .filterIsInstance<network.reticulum.interfaces.rnode.RNodeInterface>()
+            .firstOrNull { it.online.value }
+            ?.name
+            ?.let { RNodeBatteryStore.get(it) }
+            ?: -1
 
     /**
      * JSON snapshot of BLE peers. Empty array when no peers are connected.
