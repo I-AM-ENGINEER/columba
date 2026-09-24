@@ -1924,6 +1924,15 @@ class NativeRnsBackendImpl(
     override suspend fun getDebugInfo(): Map<String, Any> {
         val isReady = _networkStatus.value is NetworkStatus.READY
         val transportInterfaces = Transport.getInterfaces()
+        // Transport rows are InterfaceAdapter handles, never the concrete
+        // RNodeInterface, so the battery key is resolved through the
+        // factory's live registry and matched by name below.
+        val rnodeBatteryByName =
+            NativeInterfaceFactory.currentInterfaces
+                .filterIsInstance<network.reticulum.interfaces.rnode.RNodeInterface>()
+                .filter { it.online.value }
+                .mapNotNull { iface -> RNodeBatteryStore.get(iface.name)?.let { iface.name to it } }
+                .toMap()
         val interfaceList =
             transportInterfaces.map { iface ->
                 val row =
@@ -1939,11 +1948,7 @@ class NativeRnsBackendImpl(
                 // "battery" (0-100) on online RNode rows only, matching the
                 // Python backend's collectInterfaces() battery key that the
                 // interface-management screen renders.
-                if (iface is network.reticulum.interfaces.rnode.RNodeInterface && iface.online) {
-                    RNodeBatteryStore.get(iface.name)?.let { row + ("battery" to it) } ?: row
-                } else {
-                    row
-                }
+                rnodeBatteryByName[iface.name]?.let { row + ("battery" to it) } ?: row
             }
         return mapOf(
             "initialized" to isReady,
