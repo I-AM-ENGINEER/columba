@@ -49,7 +49,10 @@ internal object RNodeConnectionHelper {
             val iface =
                 network.reticulum.interfaces.rnode.RNodeInterface(
                     name = config.name,
-                    inputStream = input,
+                    // Tee the RX stream so CMD_STAT_BAT battery frames stay
+                    // observable; the interface consumes (or drops) control
+                    // frames itself and never reports them via callbacks.
+                    inputStream = RNodeBatteryStore.tap(config.name, input),
                     outputStream = output,
                     frequency = config.frequency,
                     bandwidth = config.bandwidth.toLong(),

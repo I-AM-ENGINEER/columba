@@ -295,6 +295,11 @@ internal object NativeInterfaceFactory {
         // leaving an orphaned collector behind.
         val iface = runningInterfaces.remove(name)
         onlineObservers.remove(name)?.cancel()
+        // The sniffed battery reading is only meaningful while its stream is
+        // live; dropping it here keeps getRNodeBattery() from serving a
+        // stale percent after a disconnect (same contract as the Python
+        // backend's offline None).
+        RNodeBatteryStore.clear(name)
         if (iface == null) return
         try {
             val ref =
