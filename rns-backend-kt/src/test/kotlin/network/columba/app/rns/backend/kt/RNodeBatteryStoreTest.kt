@@ -23,6 +23,18 @@ import java.io.InputStream
  * the firmware sender before touching the sniffer.
  */
 class RNodeBatteryStoreTest {
+    private companion object {
+        private const val FEND = 0xC0
+        private const val FESC = 0xDB
+        private const val TFESC = 0xDD
+        private const val CMD_STAT_BAT = 0x27
+        private const val CMD_DATA = 0x00
+        private const val CMD_FW_VERSION = 0x50
+    }
+
+    /** Frame builder from Int bytes so vectors read like wire dumps. */
+    private fun wire(vararg bytes: Int): ByteArray = ByteArray(bytes.size) { bytes[it].toByte() }
+
     @Before
     fun resetStore() {
         RNodeBatteryStore.clearAll()
@@ -41,16 +53,16 @@ class RNodeBatteryStoreTest {
 
     @Test
     fun stockFirmwarePayloadYieldsPercent() {
-        val wire = byteArrayOf(0xC0, 0x27, 0x01, 72, 0xC0)
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
+        val bytes = wire(FEND, CMD_STAT_BAT, 0x01, 72, FEND)
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
         assertEquals(72, RNodeBatteryStore.get("rnode"))
     }
 
     @Test
     fun extendedPayloadWithVoltageYieldsPercent() {
         // [state=1, percent=84, V=4.02 V as 0x01 0x8A (10 mV units), percent=84]
-        val wire = byteArrayOf(0xC0, 0x27, 0x01, 84, 0x01, 0x8A.toByte(), 84, 0xC0)
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
+        val bytes = wire(FEND, CMD_STAT_BAT, 0x01, 84, 0x01, 0x8A, 84, FEND)
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
         assertEquals(84, RNodeBatteryStore.get("rnode"))
     }
 
@@ -58,47 +70,47 @@ class RNodeBatteryStoreTest {
     fun escapedPayloadByteIsUnescapedBeforeParsing() {
         // percent 0x64 (100), voltage dv=475=0x01DB: the 0xDB must arrive
         // escaped as FESC TFESC (0xDB 0xDD).
-        val wire = byteArrayOf(0xC0, 0x27, 0x02, 0x64, 0x01, 0xDB.toByte(), 0xDD.toByte(), 0x64, 0xC0)
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
+        val bytes = wire(FEND, CMD_STAT_BAT, 0x02, 0x64, 0x01, FESC, TFESC, 0x64, FEND)
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
         assertEquals(100, RNodeBatteryStore.get("rnode"))
     }
 
     @Test
     fun loneBytePayloadIsPercentOnly() {
-        val wire = byteArrayOf(0xC0, 0x27, 53, 0xC0)
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
+        val bytes = wire(FEND, CMD_STAT_BAT, 53, FEND)
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
         assertEquals(53, RNodeBatteryStore.get("rnode"))
     }
 
     @Test
     fun outOfRangePercentIsIgnored() {
-        val wire = byteArrayOf(0xC0, 0x27, 0x01, 150.toByte(), 0xC0)
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
+        val bytes = wire(FEND, CMD_STAT_BAT, 0x01, 150, FEND)
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
         assertNull(RNodeBatteryStore.get("rnode"))
     }
 
     @Test
     fun dataAndOtherCommandsDoNotTouchReadings() {
-        val wire =
-            byteArrayOf(
-                0xC0, 0x00, 0xDE, 0xAD, 0xC0, // CMD_DATA
-                0xC0, 0x50, 0x01, 0x59, 0xC0, // CMD_FW_VERSION
+        val bytes =
+            wire(
+                FEND, CMD_DATA, 0xDE, 0xAD, FEND,
+                FEND, CMD_FW_VERSION, 0x01, 0x59, FEND,
             )
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
         assertNull(RNodeBatteryStore.get("rnode"))
     }
 
     @Test
     fun garbageBetweenFramesResynchronizesOnFend() {
-        val noise = byteArrayOf(0x12, 0x34, 0x56)
-        val frame = byteArrayOf(0xC0, 0x27, 0x01, 47, 0xC0)
+        val noise = wire(0x12, 0x34, 0x56)
+        val frame = wire(FEND, CMD_STAT_BAT, 0x01, 47, FEND)
         RNodeBatteryStore.tap("rnode", ByteArrayInputStream(noise + frame)).use { readAll(it) }
         assertEquals(47, RNodeBatteryStore.get("rnode"))
     }
 
     @Test
     fun interfacesAreKeyedIndependently() {
-        val frame = byteArrayOf(0xC0, 0x27, 0x01, 61, 0xC0)
+        val frame = wire(FEND, CMD_STAT_BAT, 0x01, 61, FEND)
         RNodeBatteryStore.tap("a", ByteArrayInputStream(frame)).use { readAll(it) }
         RNodeBatteryStore.tap("b", ByteArrayInputStream(frame)).use { readAll(it) }
         RNodeBatteryStore.clear("a")
@@ -108,20 +120,20 @@ class RNodeBatteryStoreTest {
 
     @Test
     fun tapIsTransparentToTheWrappedStream() {
-        val wire =
-            byteArrayOf(
-                0xC0, 0x27, 0x01, 72, 0x01, 0x8A.toByte(), 72, 0xC0,
-                0xC0, 0x00, 0x01, 0x02, 0x03, 0xC0,
-                0x00, 0xFF.toByte(), // trailing inter-frame noise
+        val bytes =
+            wire(
+                FEND, CMD_STAT_BAT, 0x01, 72, 0x01, 0x8A, 72, FEND,
+                FEND, CMD_DATA, 0x01, 0x02, 0x03, FEND,
+                0x00, 0xFF, // trailing inter-frame noise
             )
-        val viaTap = RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { readAll(it) }
-        assertArrayEquals(wire, viaTap)
+        val viaTap = RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { readAll(it) }
+        assertArrayEquals(bytes, viaTap)
     }
 
     @Test
     fun singleByteReadsAlsoFeedTheSniffer() {
-        val wire = byteArrayOf(0xC0, 0x27, 0x01, 39, 0xC0)
-        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(wire)).use { input ->
+        val bytes = wire(FEND, CMD_STAT_BAT, 0x01, 39, FEND)
+        RNodeBatteryStore.tap("rnode", ByteArrayInputStream(bytes)).use { input ->
             while (input.read() >= 0) {
                 // drain byte-at-a-time
             }
